@@ -119,7 +119,8 @@ class Bot(object):
         blacklist_hashtags=['#shop', '#store', '#free'],
         blocked_actions_protection=True,
         verbosity=True,
-        device=None
+        device=None,
+        do_logout=False
     ):
         self.api = API(device=device, base_path=base_path)
         self.base_path = base_path
@@ -227,6 +228,8 @@ class Bot(object):
         self.proxy = proxy
         self.verbosity = verbosity
 
+        self.do_logout = do_logout
+
         self.logger = self.api.logger
         self.logger.info('Instabot Started')
 
@@ -290,20 +293,23 @@ class Bot(object):
         return next((p.version for p in pkg_resources.working_set if p.project_name.lower() == 'instabot'), "No match")
 
     def logout(self, *args, **kwargs):
-        save_checkpoint(self)
         self.api.logout()
-        self.logger.info("Bot stopped. "
-                         "Worked: %s", datetime.datetime.now() - self.start_time)
         self.print_counters()
 
     def login(self, **args):
         if self.proxy:
             args['proxy'] = self.proxy
-        if self.api.login(**args) is False:
-            return False
+        if self.do_logout or not self.api.check_cookie(**args):
+            if not self.api.login(**args):
+                return False
+            elif self.do_logout:
+                self.prepare()
+                signal.signal(signal.SIGTERM, self.logout)
+                atexit.register(self.logout)
+                return True
         self.prepare()
-        signal.signal(signal.SIGTERM, self.logout)
-        atexit.register(self.logout)
+        signal.signal(signal.SIGTERM, self.print_counters)
+        atexit.register(self.print_counters)
         return True
 
     def prepare(self):
@@ -315,6 +321,9 @@ class Bot(object):
                 self.total[k] = v
 
     def print_counters(self):
+        save_checkpoint(self)
+        self.logger.info("Bot stopped. "
+                         "Worked: %s", datetime.datetime.now() - self.start_time)
         for key, val in self.total.items():
             if val > 0:
                 self.logger.info("Total {}: {}{}".format(key, val,

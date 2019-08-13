@@ -69,32 +69,23 @@ class API(object):
         self.uuid = self.generate_UUID(uuid_type=True)
 
     def login(self, username=None, password=None, force=False, proxy=None,
-              use_cookie=False, cookie_fname=None):
-        if password is None:
-            username, password = get_credentials(username=username)
-
-        self.device_id = self.generate_device_id(self.get_seed(username, password))
-        self.proxy = proxy
-        self.set_user(username, password)
-
-        if not cookie_fname:
+              use_cookie=True, cookie_fname=None):
+        if use_cookie:
+            return self.check_cookie(username=username, password=password, proxy=proxy)
+        if not use_cookie and (not self.is_logged_in or force):
+            if password is None:
+                username, password = get_credentials(username=username)
+            try:
+                if self.device_id:
+                    pass
+            except Exception as e:
+                print(str(e))
+                self.device_id = self.generate_device_id(self.get_seed(username, password))
+            self.proxy = proxy
+            self.set_user(username, password)
             cookie_fname = "{username}_cookie.txt".format(username=username)
             cookie_fname = os.path.join(self.base_path, cookie_fname)
 
-        cookie_is_loaded = False
-        if use_cookie:
-            try:
-                self.load_cookie(cookie_fname)
-                cookie_is_loaded = True
-                self.is_logged_in = True
-                self.set_proxy()  # Only happens if `self.proxy`
-                self.logger.info("Logged-in successfully as '{}' using the cookie!".format(self.username))
-                return True
-            except Exception:
-                print("The cookie is not found, but don't worry `instabot`"
-                      " will create it for you using your login details.")
-
-        if not cookie_is_loaded and (not self.is_logged_in or force):
             self.session = requests.Session()
             self.set_proxy()  # Only happens if `self.proxy`
             url = 'si/fetch_headers/?challenge_type=signup&guid={uuid}'
@@ -111,12 +102,14 @@ class API(object):
                 })
 
                 if self.send_request('accounts/login/', data, True):
+                    use_cookie=True
                     self.save_successful_login(use_cookie, cookie_fname)
                     return True
                 elif self.last_json.get('error_type', '') == 'checkpoint_challenge_required':
                     self.logger.info('Checkpoint challenge required...')
                     solved = self.solve_challenge()
                     if solved:
+                        use_cookie=True
                         self.save_successful_login(use_cookie, cookie_fname)
                         return True
                     else:
@@ -125,6 +118,29 @@ class API(object):
                 else:
                     self.save_failed_login()
                     return False
+
+    def check_cookie(self, username=None, password=None, proxy=None):
+        if password is None:
+            username, password = get_credentials(username=username)
+        self.set_user(username, password)
+        cookie_fname = "{username}_cookie.txt".format(username=username)
+        cookie_fname = os.path.join(self.base_path, cookie_fname)
+
+        try:
+            self.load_cookie(cookie_fname)
+            self.is_logged_in = True
+            self.proxy = proxy
+            self.set_proxy()  # Only happens if `self.proxy
+            if not self.get_self_users_following():
+                self.is_logged_in = False
+                return self.login(username=username, password=password, use_cookie=False)
+            self.logger.info("Logged-in successfully as '{}' using the cookie!".format(self.username))
+            return True
+        except Exception as e:
+            print(e)
+            print("The cookie is not found, but don't worry `instabot`"
+                  " will create it for you using your login details.")
+            return self.login(username=username, password=password, use_cookie=False)
 
     def load_cookie(self, fname):
         # Python2 compatibility
@@ -273,10 +289,18 @@ class API(object):
                 return False
         else:
             if response.status_code != 404 and response.status_code != "404":
+                if response.status_code == 403:
+                    self.logger.info("Your cookie is blocked: Going to relogin!")
+                    return False
                 self.logger.error("Request returns {} error!".format(response.status_code))
             try:
                 response_data = json.loads(response.text)
                 if "feedback_required" in str(response_data.get('message')):
+                    if response_data.get('feedback_title') == 'Action Blocked':
+                        self.logger.error("This action was blocked. Going to sleep 10 seconds and relogin!")
+                        time.sleep(10)
+                        self.logout()
+                        return self.login(username=self.username, password=self.password, proxy=self.proxy)
                     self.logger.error("ATTENTION!: `feedback_required`" + str(response_data.get('feedback_message')))
                     return "feedback_required"
             except ValueError:

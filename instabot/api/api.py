@@ -297,8 +297,9 @@ class API(object):
                 response_data = json.loads(response.text)
                 if "feedback_required" in str(response_data.get('message')):
                     if response_data.get('feedback_title') == 'Action Blocked':
-                        self.logger.error("This action was blocked. Going to sleep 10 seconds and relogin!")
-                        time.sleep(10)
+                        sleep_time = random.randint(300, 600)
+                        self.logger.error("This action was blocked. Going to sleep {:.2f} minutes and relogin!".format(sleep_time / 60))
+                        time.sleep(sleep_time)
                         self.logout()
                         return self.login(username=self.username, password=self.password, proxy=self.proxy)
                     self.logger.error("ATTENTION!: `feedback_required`" + str(response_data.get('feedback_message')))
